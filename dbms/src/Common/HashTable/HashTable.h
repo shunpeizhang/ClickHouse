@@ -242,6 +242,103 @@ struct ZeroValueStorage<false, Cell>
     const Cell * zeroValue() const { return nullptr; }
 };
 
+/**
+  * In some aggregation scenarios, when adding a key to the hash table, we
+  * start with a temporary key object, and if it turns out to be a new key,
+  * we must make it persistent (e.g. copy to an Arena) and use the resulting
+  * persistent object as hash table key. This happens only for StringRef keys,
+  * because other key types are stored by value, but StringRef is a pointer-like
+  * type: the actual data are stored elsewhere. Even for StringRef, we don't
+  * make a persistent copy of the key in each of the following cases:
+  * 1) the aggregation method doesn't use temporary keys, so they're persistent
+  *    from the start;
+  * 1) the key is already present in the hash table;
+  * 3) that particular key is stored by value, e.g. a short StringRef key in
+  *    StringHashMap.
+  *
+  * In the past, the procedure for working with temporary keys was as follows:
+  * - emplace() returns whether the key is newly inserted. This information is
+  *   needed regardless of the key persistence, e.g. so that we can initialize
+  *   the mapped value for a new key. emplace() also returns a mutable reference
+  *   to the key that is stored in hash table (techically, it returns a mutable
+  *   reference to the whole pair of key and the corresponding mapped value).
+  * - the caller makes a persistent copy of the key, and updates the stored key
+  *   through the returned reference.
+  * This worked well enough for normal HashTable, where the decision depends
+  * only on whether the key is new or not (case (2) from above list). However,
+  * now we are adding a compound hash table for StringRef keys, so case (3)
+  * appears. The decision about persistence now depends on some properties of
+  * the key, and the logic of this decision is tied to the particular hash table
+  * implementation. This means that the hash table user now doesn't have enough
+  * data and logic to make this decision by itself.
+  *
+  * In principle, we could support this new scenario by adding another output
+  * value to emplace() -- say, an optional "pointer to the key that must be
+  * replaced with persistent key", which is nullptr in the cases when the
+  * persistent key is not needed. The caller would then branch on this value in
+  * runtime, and update the key if needed.
+  * The main (purported) drawback of this method is the need to have an extra
+  * branch in the caller, and the need to first store some temporary key that
+  * is later discarded. This code is used in aggregation, which is a very
+  * performance-sensitive area, so having to do any extra work there is dubious.
+  * However, this was not benchmarked, so it is only a speculation. Implementing
+  * and benchmarking this idea is moderately hard, because of the code it has
+  * to interface to, and unfortunately now we don't have enough time to do that.
+  * Another drawback is that having three output parameters looks somewhat
+  * complex.
+  *
+  * Instead of that, we provide a callback for the hash table to call when
+  * it needs a persistent key. This means we don't have additional branching,
+  * and we store the right key the first time and don't have to replace it later.
+  *
+  * How do we inject this key persistence policy into hash table? First thing
+  * that comes to mind is putting it into the hash table class itself, and
+  * initializing it in the hash table constructor, but this is not without
+  * problems:
+  * 1) the hash table declaration is already overloaded with all kinds of
+  *    policies, and adding another one is just cumbersome.
+  * 2) this can increase the size of the hash table object (e.g. because of
+  *    having to store a reference to Arena), which is important for aggregate
+  *    function states.
+  * 3) having one Arena per hash table might be inconvenient, when we are
+  *    merging the states of aggregate functions from different blocks, that
+  *    refer to different arenas.
+  *
+  * This is why we pass the policy to the emplace() method. It has a special
+  * variant called emplaceHolder(), which accepts a key holder object instead of
+  * the key itself. This key holder exposes the methods to control key
+  * persistence. The interface it provides is described by its default
+  * implementation that does nothing: NoopKeyHolder.
+  */
+template<typename Key>
+struct NoopKeyHolder
+{
+    Key key;
+
+    NoopKeyHolder(Key key_) : key(key_) {}
+
+    /// This constructor allows to use the same code for NoopKeyHolder and ArenaKeyHolder.
+    NoopKeyHolder(Key key_, DB::Arena &) : key(key_) {}
+
+    /**
+      * Dereference operator -- returns the key.
+      * Can return the temporary key initially.
+      * After the call to persist(), must return the persistent key.
+      */
+    Key & ALWAYS_INLINE operator * () { return key; }
+
+    /**
+      * Make the key persistent. The dereference operator must return persistent
+      * key after this call.
+      */
+    void ALWAYS_INLINE persistKey() {};
+
+    /**
+      * Discard the key. The dereference operator may return an invalid value
+      * after this call.
+      */
+    void ALWAYS_INLINE discardKey() {};
+};
 
 template
 <
@@ -630,6 +727,8 @@ protected:
 
 
     /// If the key is zero, insert it into a special place and return true.
+    /// We don't have to persist a zero key, because it's not actually inserted.
+    /// That's why we just take a Key by value, an not a smart pointer to it.
     bool ALWAYS_INLINE emplaceIfZero(Key x, iterator & it, bool & inserted, size_t hash_value)
     {
         /// If it is claimed that the zero key can not be inserted into the table.
@@ -655,17 +754,22 @@ protected:
         return false;
     }
 
-    void ALWAYS_INLINE emplaceNonZeroImpl(size_t place_value, Key x, iterator & it, bool & inserted, size_t hash_value)
+    template<typename KeyHolder>
+    void ALWAYS_INLINE emplaceNonZeroImpl(size_t place_value, KeyHolder && key_holder,
+                                          iterator & it, bool & inserted, size_t hash_value)
     {
         it = iterator(this, &buf[place_value]);
 
         if (!buf[place_value].isZero(*this))
         {
+            key_holder.discardKey();
             inserted = false;
             return;
         }
 
-        new(&buf[place_value]) Cell(x, *this);
+        key_holder.persistKey();
+
+        new(&buf[place_value]) Cell(*key_holder, *this);
         buf[place_value].setHash(hash_value);
         inserted = true;
         ++m_size;
@@ -687,17 +791,18 @@ protected:
                 throw;
             }
 
-            it = find(x, hash_value);
+            it = find(*key_holder, hash_value);
         }
     }
 
     /// Only for non-zero keys. Find the right place, insert the key there, if it does not already exist. Set iterator to the cell in output parameter.
-    void ALWAYS_INLINE emplaceNonZero(Key x, iterator & it, bool & inserted, size_t hash_value)
+    template <typename KeyHolder>
+    void ALWAYS_INLINE emplaceNonZero(KeyHolder && key_holder, iterator & it,
+                                      bool & inserted, size_t hash_value)
     {
-        size_t place_value = findCell(x, hash_value, grower.place(hash_value));
-        emplaceNonZeroImpl(place_value, x, it, inserted, hash_value);
+        size_t place_value = findCell(*key_holder, hash_value, grower.place(hash_value));
+        emplaceNonZeroImpl(place_value, key_holder, it, inserted, hash_value);
     }
-
 
 
 public:
@@ -708,7 +813,10 @@ public:
 
         size_t hash_value = hash(Cell::getKey(x));
         if (!emplaceIfZero(Cell::getKey(x), res.first, res.second, hash_value))
-            emplaceNonZero(Cell::getKey(x), res.first, res.second, hash_value);
+        {
+            NoopKeyHolder<Key> key_holder(Cell::getKey(x));
+            emplaceNonZero(key_holder, res.first, res.second, hash_value);
+        }
 
         if (res.second)
             res.first.ptr->setMapped(x);
@@ -739,19 +847,30 @@ public:
       * if (inserted)
       *     new(&it->second) Mapped(value);
       */
-    void ALWAYS_INLINE emplace(Key x, iterator & it, bool & inserted)
+    template <typename KeyHolder>
+    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, iterator & it, bool & inserted)
     {
-        size_t hash_value = hash(x);
-        if (!emplaceIfZero(x, it, inserted, hash_value))
-            emplaceNonZero(x, it, inserted, hash_value);
+        emplaceKeyHolder(key_holder, it, inserted, hash(*key_holder));
+    }
+
+    void ALWAYS_INLINE emplace(Key key, iterator & it, bool & inserted)
+    {
+        emplaceKeyHolder(NoopKeyHolder(key), it, inserted);
     }
 
 
     /// Same, but with a precalculated value of hash function.
-    void ALWAYS_INLINE emplace(Key x, iterator & it, bool & inserted, size_t hash_value)
+    void ALWAYS_INLINE emplace(Key key, iterator & it, bool & inserted, size_t hash_value)
     {
-        if (!emplaceIfZero(x, it, inserted, hash_value))
-            emplaceNonZero(x, it, inserted, hash_value);
+        emplaceKeyHolder(NoopKeyHolder(key), it, inserted, hash_value);
+    }
+
+    template <typename KeyHolder>
+    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, iterator & it,
+                                  bool & inserted, size_t hash_value)
+    {
+        if (!emplaceIfZero(*key_holder, it, inserted, hash_value))
+            emplaceNonZero(key_holder, it, inserted, hash_value);
     }
 
     /// Copy the cell from another hash table. It is assumed that the cell is not zero, and also that there was no such key in the table yet.

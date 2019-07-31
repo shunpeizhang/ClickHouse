@@ -294,6 +294,21 @@ public:
     void ALWAYS_INLINE emplace(Key x, iterator & it, bool & inserted) { emplaceImpl(x, it, inserted); }
     void ALWAYS_INLINE emplace(Key x, iterator & it, bool & inserted, size_t) { emplaceImpl(x, it, inserted); }
 
+    // FixedHashTable doesn't store references to the keys, so it doesn't care
+    // about key persistence.
+    template <typename KeyHolder>
+    void emplaceKeyHolder(KeyHolder && key_holder, iterator & it, bool & inserted)
+    {
+        emplace(*key_holder, it, inserted);
+    }
+
+    template <typename KeyHolder>
+    void emplaceKeyHolder(KeyHolder && key_holder, iterator & it, bool & inserted, size_t)
+    {
+        emplace(*key_holder, it, inserted);
+    }
+
+
     iterator ALWAYS_INLINE find(Key x)
     {
         return !buf[x].isZero(*this) ? iterator(this, &buf[x]) : end();
