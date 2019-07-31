@@ -175,7 +175,7 @@ namespace
             // emplaceNonZeroImpl() might need to re-find the cell if the table grows,
             // but it will find it correctly by the key alone, so we don't have to
             // pass it the 'object'.
-            this->emplaceNonZeroImpl(place_value, key, it, inserted, hash_value);
+            this->emplaceNonZeroImpl(place_value, NoopKeyHolder(key), it, inserted, hash_value);
         }
 
         /// Searches position by object.
