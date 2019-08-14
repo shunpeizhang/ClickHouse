@@ -89,6 +89,8 @@ struct HashTableCell
     using State = TState;
 
     using value_type = Key;
+    using mapped_type = void;
+
     Key key;
 
     HashTableCell() {}
@@ -130,8 +132,7 @@ struct HashTableCell
     /// Whether the cell is deleted.
     bool isDeleted() const { return false; }
 
-    /// Set the mapped value, if any (for HashMap), to the corresponding `value`.
-    void setMapped(const value_type & /*value*/) {}
+    void * getMapped() { return this; }
 
     /// Serialization, in binary and text form.
     void write(DB::WriteBuffer & wb) const         { DB::writeBinary(key, wb); }
@@ -141,6 +142,17 @@ struct HashTableCell
     void read(DB::ReadBuffer & rb)        { DB::readBinary(key, rb); }
     void readText(DB::ReadBuffer & rb)    { DB::readDoubleQuoted(key, rb); }
 };
+
+template <typename MappedType, typename ValueType>
+void setMapped(MappedType * dest, const ValueType & src)
+{
+    *dest = src.second;
+}
+
+// For cells with no mapped type
+template <typename ValueType>
+void setMapped(void * /* dest */, const ValueType & /* src */)
+{}
 
 
 /** Determines the size of the hash table, and when and how much it should be resized.
@@ -568,6 +580,7 @@ protected:
 public:
     using key_type = Key;
     using value_type = typename Cell::value_type;
+    using MappedPtr = typename Cell::mapped_type *;
 
     size_t hash(const Key & x) const { return Hash::operator()(x); }
 
@@ -728,7 +741,7 @@ protected:
     /// If the key is zero, insert it into a special place and return true.
     /// We don't have to persist a zero key, because it's not actually inserted.
     /// That's why we just take a Key by value, an not a smart pointer to it.
-    bool ALWAYS_INLINE emplaceIfZero(Key x, iterator & it, bool & inserted, size_t hash_value)
+    bool ALWAYS_INLINE emplaceIfZero(Key x, MappedPtr & it, bool & inserted, size_t hash_value)
     {
         /// If it is claimed that the zero key can not be inserted into the table.
         if (!Cell::need_zero_value_storage)
@@ -736,12 +749,13 @@ protected:
 
         if (Cell::isZero(x, *this))
         {
-            it = iteratorToZero();
+            it = this->zeroValue()->getMapped();
+
             if (!this->hasZero())
             {
                 ++m_size;
                 this->setHasZero();
-                it.ptr->setHash(hash_value);
+                this->zeroValue()->setHash(hash_value);
                 inserted = true;
             }
             else
@@ -755,9 +769,9 @@ protected:
 
     template<typename KeyHolder>
     void ALWAYS_INLINE emplaceNonZeroImpl(size_t place_value, KeyHolder && key_holder,
-                                          iterator & it, bool & inserted, size_t hash_value)
+                                          MappedPtr & it, bool & inserted, size_t hash_value)
     {
-        it = iterator(this, &buf[place_value]);
+        it = buf[place_value].getMapped();
 
         if (!buf[place_value].isZero(*this))
         {
@@ -790,13 +804,16 @@ protected:
                 throw;
             }
 
-            it = find(*key_holder, hash_value);
+            // The hash table was rehashed, so we have to re-find the key.
+            size_t new_place = findCell(*key_holder, hash_value, grower.place(hash_value));
+            assert(!buf[new_place].isZero(*this));
+            it = buf[new_place].getMapped();
         }
     }
 
     /// Only for non-zero keys. Find the right place, insert the key there, if it does not already exist. Set iterator to the cell in output parameter.
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceNonZero(KeyHolder && key_holder, iterator & it,
+    void ALWAYS_INLINE emplaceNonZero(KeyHolder && key_holder, MappedPtr & it,
                                       bool & inserted, size_t hash_value)
     {
         size_t place_value = findCell(*key_holder, hash_value, grower.place(hash_value));
@@ -806,9 +823,9 @@ protected:
 
 public:
     /// Insert a value. In the case of any more complex values, it is better to use the `emplace` function.
-    std::pair<iterator, bool> ALWAYS_INLINE insert(const value_type & x)
+    std::pair<MappedPtr, bool> ALWAYS_INLINE insert(const value_type & x)
     {
-        std::pair<iterator, bool> res;
+        std::pair<MappedPtr, bool> res;
 
         size_t hash_value = hash(Cell::getKey(x));
         if (!emplaceIfZero(Cell::getKey(x), res.first, res.second, hash_value))
@@ -818,7 +835,7 @@ public:
         }
 
         if (res.second)
-            res.first.ptr->setMapped(x);
+            setMapped(res.first, x);
 
         return res;
     }
@@ -847,25 +864,25 @@ public:
       *     new(&it->second) Mapped(value);
       */
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, iterator & it, bool & inserted)
+    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
     {
         emplaceKeyHolder(key_holder, it, inserted, hash(*key_holder));
     }
 
-    void ALWAYS_INLINE emplace(Key key, iterator & it, bool & inserted)
+    void ALWAYS_INLINE emplace(Key key, MappedPtr & it, bool & inserted)
     {
         emplaceKeyHolder(NoopKeyHolder(key), it, inserted);
     }
 
 
     /// Same, but with a precalculated value of hash function.
-    void ALWAYS_INLINE emplace(Key key, iterator & it, bool & inserted, size_t hash_value)
+    void ALWAYS_INLINE emplace(Key key, MappedPtr & it, bool & inserted, size_t hash_value)
     {
         emplaceKeyHolder(NoopKeyHolder(key), it, inserted, hash_value);
     }
 
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, iterator & it,
+    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it,
                                   bool & inserted, size_t hash_value)
     {
         if (!emplaceIfZero(*key_holder, it, inserted, hash_value))
