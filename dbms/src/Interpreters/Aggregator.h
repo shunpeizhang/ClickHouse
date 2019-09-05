@@ -1153,5 +1153,11 @@ APPLY_FOR_AGGREGATED_VARIANTS(M)
 
 #undef M
 
+#define M(NAME) \
+    template <> \
+    Block Aggregator::convertOneBucketToBlock<decltype(AggregatedDataVariants::NAME)::element_type>(AggregatedDataVariants &, decltype(AggregatedDataVariants::NAME)::element_type &, bool, size_t bucket) const;
+APPLY_FOR_VARIANTS_TWO_LEVEL(M)
+#undef M
+
 
 }

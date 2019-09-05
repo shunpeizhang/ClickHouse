@@ -5,7 +5,6 @@
 #include <DataStreams/MergingAggregatedMemoryEfficientBlockInputStream.h>
 #include <Processors/ISource.h>
 #include <Processors/Transforms/MergingAggregatedMemoryEfficientTransform.h>
-#include <Processors/IInflatingTransform.h>
 
 namespace ProfileEvents
 {
