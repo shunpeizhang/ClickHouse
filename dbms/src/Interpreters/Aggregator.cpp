@@ -740,6 +740,12 @@ Block Aggregator::convertOneBucketToBlock(
     return block;
 }
 
+#define M(NAME) \
+    template <> \
+    Block Aggregator::convertOneBucketToBlock<decltype(AggregatedDataVariants::NAME)::element_type>(AggregatedDataVariants &, decltype(AggregatedDataVariants::NAME)::element_type &, bool, size_t bucket);
+APPLY_FOR_VARIANTS_TWO_LEVEL(M)
+#undef M
+
 
 template <typename Method>
 void Aggregator::writeToTemporaryFileImpl(
