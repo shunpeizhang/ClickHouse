@@ -79,6 +79,8 @@ namespace
             , arena(arena_)
             {}
 
+        String getName() const override { return "ConvertingAggregatedToChunksSource"; }
+
     protected:
         Chunk generate() override
         {
@@ -120,6 +122,8 @@ namespace
         ConvertingAggregatedToChunksTransform(AggregatingTransformParamsPtr params_, ManyAggregatedDataPtr data_, size_t num_threads_)
             : IProcessor({}, {params_->getHeader()})
             , params(std::move(params_)), data(std::move(data_)), num_threads(num_threads_) {}
+
+        String getName() const override { return "ConvertingAggregatedToChunksTransform"; }
 
         void work() override
         {
