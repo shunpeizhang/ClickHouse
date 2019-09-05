@@ -900,6 +900,8 @@ public:
 protected:
     friend struct AggregatedDataVariants;
     friend class MergingAndConvertingBlockInputStream;
+    friend class ConvertingAggregatedToChunksTransform;
+    friend class ConvertingAggregatedToChunksSource;
 
     Params params;
 
