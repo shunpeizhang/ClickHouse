@@ -129,7 +129,7 @@ void NO_INLINE bench(const std::vector<StringRef> & data, DB::Arena & /*pool*/, 
 
         for (size_t i = 0, size = data.size(); i < size; ++i)
         {
-            map.emplaceKeyHolder(DB::ArenaKeyHolder{data[i], pool}, it, inserted);
+            map.emplace(DB::ArenaKeyHolder{data[i], pool}, it, inserted);
             if (inserted)
                 *it = 0;
             ++*it;
@@ -146,7 +146,7 @@ void NO_INLINE bench(const std::vector<StringRef> & data, DB::Arena & /*pool*/, 
 
         for (size_t i = 0, size = data.size(); i < size; ++i)
         {
-            map.emplaceKeyHolder(DB::ArenaKeyHolder{data[i], pool}, it, inserted);
+            map.emplace(DB::ArenaKeyHolder{data[i], pool}, it, inserted);
             if (inserted)
                 *it = 0;
             ++*it;

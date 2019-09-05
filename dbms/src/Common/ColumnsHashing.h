@@ -59,7 +59,7 @@ struct HashMethodOneNumber
     using Base::getHash; /// (const Data & data, size_t row, Arena & pool) -> size_t
 
     /// Is used for default implementation in HashMethodBase.
-    NoopKeyHolder<FieldType> getKeyHolder(size_t row, Arena &) const { return unalignedLoad<FieldType>(vec + row * sizeof(FieldType)); }
+    FieldType getKeyHolder(size_t row, Arena &) const { return unalignedLoad<FieldType>(vec + row * sizeof(FieldType)); }
 };
 
 
@@ -82,13 +82,18 @@ struct HashMethodString
         chars = column_string.getChars().data();
     }
 
-    using KeyHolder = typename std::conditional<place_string_to_arena,
-        ArenaKeyHolder,
-        NoopKeyHolder<StringRef>>::type;
-
-    KeyHolder getKeyHolder(ssize_t row, Arena & pool) const
+    auto getKeyHolder(ssize_t row, [[maybe_unused]] Arena & pool) const
     {
-        return KeyHolder{StringRef(chars + offsets[row - 1], offsets[row] - offsets[row - 1] - 1), pool};
+        StringRef key(chars + offsets[row - 1], offsets[row] - offsets[row - 1] - 1);
+
+        if constexpr (place_string_to_arena)
+        {
+            return ArenaKeyHolder{key, pool};
+        }
+        else
+        {
+            return key;
+        }
     }
 
 protected:
@@ -115,13 +120,18 @@ struct HashMethodFixedString
         chars = &column_string.getChars();
     }
 
-    using KeyHolder = typename std::conditional<place_string_to_arena,
-        ArenaKeyHolder,
-        NoopKeyHolder<StringRef>>::type;
-
-    KeyHolder getKeyHolder(size_t row, [[maybe_unused]] Arena & pool) const
+    auto getKeyHolder(size_t row, [[maybe_unused]] Arena & pool) const
     {
-        return KeyHolder{StringRef(&(*chars)[row * n], n), pool};
+        StringRef key(&(*chars)[row * n], n);
+
+        if constexpr (place_string_to_arena)
+        {
+            return ArenaKeyHolder{key, pool};
+        }
+        else
+        {
+            return key;
+        }
     }
 
 protected:
@@ -341,9 +351,9 @@ struct HashMethodSingleLowCardinalityColumn : public SingleColumnMethod
         bool inserted = false;
         typename Data::MappedPtr it;
         if (saved_hash)
-            data.emplaceKeyHolder(key_holder, it, inserted, saved_hash[row]);
+            data.emplace(key_holder, it, inserted, saved_hash[row]);
         else
-            data.emplaceKeyHolder(key_holder, it, inserted);
+            data.emplace(key_holder, it, inserted);
 
         visit_cache[row] = VisitValue::Found;
 
@@ -475,7 +485,7 @@ struct HashMethodKeysFixed
         }
     }
 
-    ALWAYS_INLINE NoopKeyHolder<Key> getKeyHolder(size_t row, Arena &) const
+    ALWAYS_INLINE Key getKeyHolder(size_t row, Arena &) const
     {
         if constexpr (has_nullable_keys)
         {
@@ -536,7 +546,7 @@ struct HashMethodHashed
     HashMethodHashed(ColumnRawPtrs key_columns_, const Sizes &, const HashMethodContextPtr &)
         : key_columns(std::move(key_columns_)) {}
 
-    ALWAYS_INLINE NoopKeyHolder<Key> getKeyHolder(size_t row, Arena &) const
+    ALWAYS_INLINE Key getKeyHolder(size_t row, Arena &) const
     {
         return hash128(row, key_columns.size(), key_columns);
     }

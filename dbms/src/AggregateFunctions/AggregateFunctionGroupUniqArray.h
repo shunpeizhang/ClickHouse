@@ -222,7 +222,7 @@ public:
         bool inserted;
         State::Set::MappedPtr it;
         auto key_holder = getKeyHolder(*columns[0], row_num, *arena);
-        set.emplaceKeyHolder(key_holder, it, inserted);
+        set.emplace(key_holder, it, inserted);
     }
 
     void merge(AggregateDataPtr place, ConstAggregateDataPtr rhs, Arena * arena) const override
@@ -239,7 +239,7 @@ public:
 
             // We have to copy the keys to our arena.
             assert(arena != nullptr);
-            cur_set.emplaceKeyHolder(ArenaKeyHolder{rhs_elem.getValue(), *arena},
+            cur_set.emplace(ArenaKeyHolder{rhs_elem.getValue(), *arena},
                                it, inserted);
         }
     }

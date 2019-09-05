@@ -264,8 +264,8 @@ public:
     iterator end() { return iterator(this, buf + BUFFER_SIZE); }
 
 
-protected:
-    void ALWAYS_INLINE emplaceImpl(Key x, MappedPtr & it, bool & inserted)
+public:
+    void ALWAYS_INLINE emplace(Key x, MappedPtr & it, bool & inserted, size_t /* hash */ = 0)
     {
         it = buf[x].getMapped();
 
@@ -280,34 +280,14 @@ protected:
         ++m_size;
     }
 
-
-public:
     std::pair<MappedPtr, bool> ALWAYS_INLINE insert(const value_type & x)
     {
         std::pair<MappedPtr, bool> res;
-        emplaceImpl(Cell::getKey(x), res.first, res.second);
+        emplace(Cell::getKey(x), res.first, res.second);
         if (res.second)
             setMapped(res.first, x);
 
         return res;
-    }
-
-
-    void ALWAYS_INLINE emplace(Key x, MappedPtr & it, bool & inserted) { emplaceImpl(x, it, inserted); }
-    void ALWAYS_INLINE emplace(Key x, MappedPtr & it, bool & inserted, size_t) { emplaceImpl(x, it, inserted); }
-
-    // FixedHashTable doesn't store references to the keys, so it doesn't care
-    // about key persistence.
-    template <typename KeyHolder>
-    void emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
-    {
-        emplace(*key_holder, it, inserted);
-    }
-
-    template <typename KeyHolder>
-    void emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it, bool & inserted, size_t)
-    {
-        emplace(*key_holder, it, inserted);
     }
 
     MappedPtr ALWAYS_INLINE find(Key x)

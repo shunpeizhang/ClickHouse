@@ -19,7 +19,7 @@ public:
     // TODO: currently hashing contains redundant computations when doing distributed or external aggregations
     size_t hash(const Key & x) const
     {
-        return const_cast<Self &>(*this).dispatch(NoopKeyHolder(x),
+        return const_cast<Self &>(*this).dispatch(x,
             [&](const auto &, const auto &, size_t hash) { return hash; });
     }
 
@@ -81,7 +81,7 @@ public:
     decltype(auto) ALWAYS_INLINE dispatch(KeyHolder && key_holder, Func && func)
     {
         static constexpr StringKey0 key0{};
-        const StringRef & x = *key_holder;
+        const StringRef & x = keyHolderGetKey(key_holder);
         size_t sz = x.size;
         const char * p = x.data;
         // pending bits that needs to be shifted out
@@ -98,8 +98,8 @@ public:
         switch (sz)
         {
             case 0:
-                key_holder.discardKey();
-                return func(impls[0].m0, NoopKeyHolder(key0), 0);
+                keyHolderDiscardKey(key_holder);
+                return func(impls[0].m0, key0, 0);
             CASE_1_8 : {
                 // first half page
                 if ((reinterpret_cast<uintptr_t>(p) & 2048) == 0)
@@ -115,8 +115,8 @@ public:
                 }
                 res = _mm_crc32_u64(res, n[0]);
                 buck = getBucketFromHash(res);
-                key_holder.discardKey();
-                return func(impls[buck].m1, NoopKeyHolder(k8), res);
+                keyHolderDiscardKey(key_holder);
+                return func(impls[buck].m1, k8, res);
             }
             CASE_9_16 : {
                 memcpy(&n[0], p, 8);
@@ -126,8 +126,8 @@ public:
                 n[1] >>= s;
                 res = _mm_crc32_u64(res, n[1]);
                 buck = getBucketFromHash(res);
-                key_holder.discardKey();
-                return func(impls[buck].m2, NoopKeyHolder(k16), res);
+                keyHolderDiscardKey(key_holder);
+                return func(impls[buck].m2, k16, res);
             }
             CASE_17_24 : {
                 memcpy(&n[0], p, 16);
@@ -138,8 +138,8 @@ public:
                 n[2] >>= s;
                 res = _mm_crc32_u64(res, n[2]);
                 buck = getBucketFromHash(res);
-                key_holder.discardKey();
-                return func(impls[buck].m3, NoopKeyHolder(k24), res);
+                keyHolderDiscardKey(key_holder);
+                return func(impls[buck].m3, k24, res);
             }
             default: {
                 memcpy(&n, x.data, 24);
@@ -164,14 +164,14 @@ public:
     }
 
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
+    void ALWAYS_INLINE emplace(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
     {
         dispatch(key_holder, typename Impl::EmplaceCallable{it, inserted});
     }
 
     MappedPtr ALWAYS_INLINE find(Key x)
     {
-        return dispatch(NoopKeyHolder(x), typename Impl::FindCallable{});
+        return dispatch(x, typename Impl::FindCallable{});
     }
 
     void write(DB::WriteBuffer & wb) const

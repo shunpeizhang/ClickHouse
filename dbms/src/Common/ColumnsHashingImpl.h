@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Columns/IColumn.h>
+#include <Common/HashTable/HashTableKeyHolder.h>
 #include <Interpreters/AggregationCommon.h>
 
 namespace DB
@@ -116,21 +117,21 @@ public:
     ALWAYS_INLINE EmplaceResult emplaceKey(Data & data, size_t row, Arena & pool)
     {
         auto key_holder = static_cast<Derived &>(*this).getKeyHolder(row, pool);
-        return emplaceKeyHolderImpl(key_holder, data);
+        return emplaceImpl(key_holder, data);
     }
 
     template <typename Data>
     ALWAYS_INLINE FindResult findKey(Data & data, size_t row, Arena & pool)
     {
         auto key_holder = static_cast<Derived &>(*this).getKeyHolder(row, pool);
-        return findKeyImpl(*key_holder, data);
+        return findKeyImpl(keyHolderGetKey(key_holder), data);
     }
 
     template <typename Data>
     ALWAYS_INLINE size_t getHash(const Data & data, size_t row, Arena & pool)
     {
         auto key_holder = static_cast<Derived &>(*this).getKeyHolder(row, pool);
-        return data.hash(*key_holder);
+        return data.hash(keyHolderGetKey(key_holder));
     }
 
 protected:
@@ -152,11 +153,11 @@ protected:
     }
 
     template <typename Data, typename KeyHolder>
-    ALWAYS_INLINE EmplaceResult emplaceKeyHolderImpl(KeyHolder & key_holder, Data & data)
+    ALWAYS_INLINE EmplaceResult emplaceImpl(KeyHolder & key_holder, Data & data)
     {
         if constexpr (Cache::consecutive_keys_optimization)
         {
-            if (cache.found && cache.check(*key_holder))
+            if (cache.found && cache.check(keyHolderGetKey(key_holder)))
             {
                 if constexpr (has_mapped)
                     return EmplaceResult(cache.value.second, cache.value.second, false);
@@ -167,7 +168,7 @@ protected:
 
         typename Data::MappedPtr it;
         bool inserted = false;
-        data.emplaceKeyHolder(key_holder, it, inserted);
+        data.emplace(key_holder, it, inserted);
 
         [[maybe_unused]] Mapped * cached = nullptr;
         if constexpr (has_mapped)
@@ -188,13 +189,13 @@ protected:
 
             if constexpr (has_mapped)
             {
-                cache.value.first = *key_holder;
+                cache.value.first = keyHolderGetKey(key_holder);
                 cache.value.second = *it;
                 cached = &cache.value.second;
             }
             else
             {
-                cache.value = *key_holder;
+                cache.value = keyHolderGetKey(key_holder);
             }
         }
 

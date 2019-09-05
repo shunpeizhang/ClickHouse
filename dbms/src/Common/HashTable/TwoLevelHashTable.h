@@ -238,32 +238,22 @@ public:
       *     new(&it->second) Mapped(value);
       */
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
+    void ALWAYS_INLINE emplace(KeyHolder && key_holder, MappedPtr & it, bool & inserted)
     {
-        size_t hash_value = hash(*key_holder);
-        emplaceKeyHolder(key_holder, it, inserted, hash_value);
-    }
-
-    void ALWAYS_INLINE emplace(Key key, MappedPtr & it, bool & inserted)
-    {
-        emplaceKeyHolder(NoopKeyHolder(key), it, inserted);
+        size_t hash_value = hash(keyHolderGetKey(key_holder));
+        emplace(key_holder, it, inserted, hash_value);
     }
 
 
     /// Same, but with a precalculated values of hash function.
     template <typename KeyHolder>
-    void ALWAYS_INLINE emplaceKeyHolder(KeyHolder && key_holder, MappedPtr & it,
+    void ALWAYS_INLINE emplace(KeyHolder && key_holder, MappedPtr & it,
                                   bool & inserted, size_t hash_value)
     {
         size_t buck = getBucketFromHash(hash_value);
         typename Impl::MappedPtr impl_it;
-        impls[buck].emplaceKeyHolder(key_holder, impl_it, inserted, hash_value);
+        impls[buck].emplace(key_holder, impl_it, inserted, hash_value);
         it = impl_it;
-    }
-
-    void ALWAYS_INLINE emplace(Key key, MappedPtr & it, bool & inserted, size_t hash_value)
-    {
-        emplaceKeyHolder(NoopKeyHolder(key), it, inserted, hash_value);
     }
 
     MappedPtr ALWAYS_INLINE find(Key x, size_t hash_value)
