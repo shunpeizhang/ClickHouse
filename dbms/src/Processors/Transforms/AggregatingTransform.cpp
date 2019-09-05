@@ -90,20 +90,7 @@ protected:
         if (bucket_num >= NUM_BUCKETS)
             return {};
 
-        auto & merged_data = *data->variants[0];
-        auto method = merged_data.type;
-        Block block;
-
-        if (false) {}
-    #define M(NAME) \
-        else if (method == AggregatedDataVariants::Type::NAME) \
-        { \
-            params->aggregator.mergeBucketImpl<decltype(merged_data.NAME)::element_type>(data->variants, bucket_num, arena); \
-            block = params->aggregator.convertOneBucketToBlock(merged_data, *merged_data.NAME, params->final, bucket_num); \
-        }
-
-        APPLY_FOR_VARIANTS_TWO_LEVEL(M)
-    #undef M
+        Block block = params->aggregator.mergeAndConvertOneBucketToBlock(data->variants, arena, params->final, bucket_num);
 
         return convertToChunk(block);
     }

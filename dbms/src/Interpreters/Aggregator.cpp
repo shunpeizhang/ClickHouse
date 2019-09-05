@@ -740,6 +740,30 @@ Block Aggregator::convertOneBucketToBlock(
     return block;
 }
 
+Block Aggregator::mergeAndConvertOneBucketToBlock(
+    ManyAggregatedDataVariants & variants,
+    Arena * arena,
+    bool final,
+    size_t bucket) const
+{
+    auto & merged_data = *variants[0];
+    auto method = merged_data.type;
+    Block block;
+
+    if (false) {}
+#define M(NAME) \
+    else if (method == AggregatedDataVariants::Type::NAME) \
+    { \
+        mergeBucketImpl<decltype(merged_data.NAME)::element_type>(variants, bucket, arena); \
+        block = convertOneBucketToBlock(merged_data, *merged_data.NAME, final, bucket); \
+    }
+
+    APPLY_FOR_VARIANTS_TWO_LEVEL(M)
+#undef M
+
+    return block;
+}
+
 
 template <typename Method>
 void Aggregator::writeToTemporaryFileImpl(
