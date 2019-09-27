@@ -454,6 +454,10 @@ include (cmake/find_mimalloc.cmake)
 include (cmake/find_simdjson.cmake)
 include (cmake/find_rapidjson.cmake)
 
+include (cmake/find_fdb.cmake)
+include (cmake/find_grpc.cmake)
+
+
 find_contrib_lib(cityhash)
 find_contrib_lib(farmhash)
 find_contrib_lib(metrohash)

@@ -100,3 +100,9 @@
 [submodule "contrib/mimalloc"]
 	path = contrib/mimalloc
 	url = https://github.com/ClickHouse-Extras/mimalloc
+[submodule "contrib/grpc"]
+	path = contrib/grpc
+	url = https://github.com/datalliance88/grpc.git
+[submodule "contrib/fdb"]
+	path = contrib/fdb
+	url = https://github.com/datalliance88/foundationdb.git
