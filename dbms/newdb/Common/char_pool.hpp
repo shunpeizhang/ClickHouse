@@ -1,0 +1,319 @@
+#ifndef SPEED_CHAR_POOL_H_
+#define SPEED_CHAR_POOL_H_
+
+#include <mutex>
+#include <deque>
+#include <unordered_map>
+#include <cassert>
+#include <string.h>
+#include <condition_variable>
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+class char_pool_t
+{
+  typedef std::mutex this_mutex;
+  typedef std::lock_guard<std::mutex> this_guard;
+  //数组节点
+  typedef struct tag_char_node
+  {
+    unsigned int size;
+    char* data;
+    //下一节点
+    struct tag_char_node* next;
+  } char_node;
+  //空闲头部数据
+  typedef struct tag_char_node_head
+  {
+    unsigned int count;
+    char_node* head;
+  } char_node_head;
+  typedef typename std::unordered_map<const char*, char_node*> char_node_map;
+  //字符串队列
+  typedef struct tag_char_task
+  {
+    unsigned int size;
+    char* ptr;
+  } char_task;
+  typedef std::deque<char_task> char_deque;
+  //缓存最小尺寸、最大尺寸、每个空闲队列限制长度 //POOL_MIN_SIZE=128, POOL_MAX_SIZE = 4096, 
+  enum { ONCE_DEQUE_LIMIT_SIZE = 10, SIZE_ALIGN = 8, WAIT_MS = 100 };
+public:
+  char_pool_t(int once_limit_size = ONCE_DEQUE_LIMIT_SIZE);
+  ~char_pool_t();
+
+public:
+  void set_once_limit_size(unsigned int size) { this->once_limit_size_ = size; }
+  const unsigned int get_size_rate(void) const { return POOL_MIN_SIZE; }
+  const unsigned int get_limit_max_size(void) const { return POOL_MAX_SIZE; }
+  char* alloc(unsigned int size);
+  void push(char*& ptr, unsigned int size);
+  bool try_pop(char*& ptr, unsigned int& size, unsigned int wait_ms = WAIT_MS);
+  void free(char*& ptr);
+  bool contain(const char* ptr);
+  void clear(void);
+  size_t size(void) const;
+  bool empty(void) const;
+
+private:
+  void init_pool(void);
+  bool find_size_range(unsigned int size, unsigned int& roundup_size);
+  unsigned int find_size_index(unsigned int size);
+  char_node* alloc_char_node(unsigned int size);
+  void free_char_node(char_node*& node);
+
+private:
+  //每个限制数量
+  unsigned int once_limit_size_;
+  //空闲数量
+  unsigned int idle_list_count_;
+  //空闲列表
+  char_node_head* idle_list_;
+  //池集合
+  char_node_map node_map_;
+  //任务队列
+  char_deque deque_;
+  //池锁
+  mutable this_mutex pool_mutex_;
+  //队列锁
+  mutable this_mutex deque_mutex_;
+  std::condition_variable_any deque_cond_;
+};
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::char_pool_t(int once_limit_size)
+  :idle_list_(0), idle_list_count_(0), once_limit_size_(once_limit_size)
+{
+  static_assert((POOL_MAX_SIZE % POOL_MIN_SIZE == 0), "POOL_MAX_SIZE must be POOL_MIN_SIZE rate.");
+  static_assert((POOL_MAX_SIZE % SIZE_ALIGN == 0), "POOL_MAX_SIZE must be SIZE_ALIGN rate.");
+  this->init_pool();
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::~char_pool_t()
+{
+  this->clear();
+
+  if (this->idle_list_)
+  {
+    delete[] this->idle_list_;
+    this->idle_list_ = 0;
+  }
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+char * char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::alloc(unsigned int size)
+{
+  if (size > 0)
+  {
+    this_guard guard_(this->pool_mutex_);
+    //查找所属的节点位置及尺寸范围
+    unsigned int index_ = 0;
+    unsigned int roundup_size_ = 0;
+    char_node* node_ = 0;
+    if (find_size_range(size, roundup_size_))
+    {
+      index_ = this->find_size_index(roundup_size_);
+      char_node_head& head_ = this->idle_list_[index_];
+      if (!head_.head)
+      {//如果此节点上面无对象，临时创建
+        node_ = this->alloc_char_node(roundup_size_);
+        this->node_map_.insert(std::make_pair(node_->data, node_));
+      }
+      else
+      {//移除空闲头部位置节点
+        node_ = head_.head;
+        char_node* next_ = node_->next;
+        head_.head = next_;
+        head_.count--;
+      }
+      //缓存数据置0，将下一节点指针置空
+      node_->next = 0;
+      memset(node_->data, 0, node_->size);
+      return node_->data;
+    }
+    else
+    {//大于最大长度4096，临时创建
+      node_ = this->alloc_char_node(size);
+      this->node_map_.insert(std::make_pair(node_->data, node_));
+      memset(node_->data, 0, node_->size);
+      return node_->data;
+    }
+  }
+  return nullptr;
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+void char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::push(char*& ptr, unsigned int size)
+{
+  assert(ptr);
+  if (!ptr)
+    return;
+
+  char* ptr_cp_ = ptr;
+  char_task task_ = { 0 };
+  task_.ptr = ptr;
+  task_.size = size;
+
+  this_guard guard_(deque_mutex_);
+  deque_.push(task_);
+  //guard_.unlock();
+
+  deque_cond_.notify_one();
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+bool char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::try_pop(char*& ptr, unsigned int& size, unsigned int wait_ms)
+{
+  this_guard guard_(deque_mutex_);
+  if (deque_.empty())
+    deque_cond_.wait_for(guard_, std::chrono::milliseconds(wait_ms));
+
+  if (deque_.empty())
+    return false;
+
+  char_task task_ = std::move(deque_.front());
+  deque_.pop_front();
+  ptr = task_.ptr;
+  size = task_.size;
+  return true;
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+void char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::free(char *& ptr)
+{
+  assert(ptr);
+  if (!ptr)
+    return;
+  this_guard guard_(this->pool_mutex_);
+  //查找当前指针是否属于缓存
+  typedef typename char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::char_node_map::iterator char_node_map_iter;
+  char_node_map_iter it_ = this->node_map_.find(ptr);
+  if (it_ == this->node_map_.end())
+    return;
+  //判断是否大于最高限值，高于最高限值释放空间
+  char_node* node_ = it_->second;
+  if (node_->size > POOL_MAX_SIZE)
+  {
+    free_char_node(node_);
+    this->node_map_.erase(it_);
+    ptr = 0;
+    return;
+  }
+  //从首部插入空闲节点数据
+  unsigned int index_ = this->find_size_index(node_->size);
+  char_node_head* head_ = &this->idle_list_[index_];
+  //如果当前队列的总数量小于许可长度
+  int head_count_ = head_->count;
+  if ((once_limit_size_ > 0) && (head_count_ < once_limit_size_))
+  {
+    node_->next = head_->head;
+    head_->head = node_;
+    head_->count++;
+  }
+  else
+  {//大于等于许可长度，则直接释放当前空间
+    free_char_node(node_);
+    this->node_map_.erase(it_);
+  }
+  ptr = 0;
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+void char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::clear(void)
+{
+  this_guard guard_(this->pool_mutex_);
+  for (auto it_ = this->node_map_.begin(); it_ != this->node_map_.end();)
+  {
+    char_node* node_ = it_->second;
+    free_char_node(node_);
+    it_ = this->node_map_.erase(it_);
+  }
+  memset(this->idle_list_, 0, sizeof(char_node_head)*this->idle_list_count_);
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+size_t char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::size(void) const
+{
+  this_guard guard_(this->pool_mutex_);
+  return this->node_map_.size();
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+bool char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::empty(void) const
+{
+  this_guard guard_(this->pool_mutex_);
+  return this->node_map_.empty();
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+bool char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::contain(const char * ptr)
+{
+  this_guard guard_(this->pool_mutex_);
+  //查找当前指针是否属于缓存
+  typedef typename char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::char_node_map::iterator char_node_map_iter;
+  char_node_map_iter it_ = this->node_map_.find(ptr);
+  return (it_ != this->node_map_.end());
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+void char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::init_pool()
+{
+  assert(!this->idle_list_);
+
+  this_guard guard_(this->pool_mutex_);
+  this->idle_list_count_ = POOL_MAX_SIZE / POOL_MIN_SIZE + ((POOL_MAX_SIZE % POOL_MIN_SIZE) > 0 ? 1 : 0);
+  this->idle_list_ = new char_node_head[this->idle_list_count_];
+  memset(this->idle_list_, 0, sizeof(char_node_head) * this->idle_list_count_);
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+bool char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::find_size_range(unsigned int size, unsigned int & roundup_size)
+{
+  if (size == 0)
+    return false;
+  //如果大于上限字节
+  if (size > POOL_MAX_SIZE)
+  {
+    roundup_size = (size + ((size % SIZE_ALIGN) > 0) ? (SIZE_ALIGN - (size % SIZE_ALIGN)) : 0);
+    return false;
+  }
+  //向上取整数
+  unsigned int remaind_ = (size % POOL_MIN_SIZE);
+  roundup_size = (size + ((remaind_ > 0) ? (POOL_MIN_SIZE - remaind_) : 0));
+  return true;
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+unsigned int char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::find_size_index(unsigned int size)
+{
+  return ((size / POOL_MIN_SIZE) - 1 + ((size % POOL_MIN_SIZE) > 0 ? 1 : 0));
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+typename char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::char_node* char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::alloc_char_node(unsigned int size)
+{
+  assert(size > 0);
+  char* new_ptr_ = new(std::nothrow)char[size];
+  //创建数组失败
+  if (!new_ptr_) return NULL;
+  //返回对象
+  char_node* node = new char_node;
+  node->size = size;
+  node->data = new_ptr_;
+  node->next = NULL;
+  return node;
+}
+
+template<unsigned int POOL_MIN_SIZE, unsigned int POOL_MAX_SIZE>
+void char_pool_t<POOL_MIN_SIZE, POOL_MAX_SIZE>::free_char_node(char_node*& node)
+{
+  if (node->data && node->size > 0)
+  {//转换为char*，释放空间
+    delete[] node->data;
+    node->data = 0;
+    delete node;
+    node = 0;
+  }
+}
+
+#endif
