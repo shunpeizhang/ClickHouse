@@ -3,7 +3,7 @@ option (USE_INTERNAL_GRPC_LIBRARY "Set to FALSE to use system grpc library inste
 
 if(USE_INTERNAL_GRPC_LIBRARY)
 	if(NOT GRPC_ROOT_DIR)
-		set(GRPC_ROOT_DIR ${PROJECT_SOURCE_DIR}/third_party/grpc)
+		set(GRPC_ROOT_DIR ${PROJECT_SOURCE_DIR}/contrib/grpc)
 	endif()
 
 	if(EXISTS "${GRPC_ROOT_DIR}/CMakeLists.txt")		
@@ -11,7 +11,7 @@ if(USE_INTERNAL_GRPC_LIBRARY)
 		set(GRPC_LIBRARY grpc++ grpc++_reflection)
 		set(GRPC_FOUND 1)
     else()
-      message(WARNING "submodule third_party/rpc is missing. to fix try run: \n git submodule update --init --recursive")
+      message(WARNING "submodule contrib/rpc is missing. to fix try run: \n git submodule update --init --recursive")
     endif()
 endif() 
 

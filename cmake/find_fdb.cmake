@@ -10,14 +10,14 @@ if (ENABLE_FDB)
        set (USE_INTERNAL_FDB_LIBRARY_DEFAULT 0)
        set (MISSING_INTERNAL_FDB_LIBRARY 1)
     else ()
-       set (USE_INTERNAL_FDB_LIBRARY_DEFAULT ${NOT_UNBUNDLED})
+       set (USE_INTERNAL_FDB_LIBRARY_DEFAULT 1)
     endif ()
 
     option (USE_INTERNAL_FDB_LIBRARY "Set to FALSE to use system capnproto library instead of bundled" ${USE_INTERNAL_FDB_LIBRARY_DEFAULT})
 
-    if (NOT EXISTS "${UltraDB_SOURCE_DIR}/third_party/fdb/CMakeLists.txt")
+    if (NOT EXISTS "${PROJECT_SOURCE_DIR}/contrib/fdb/CMakeLists.txt")
        if (USE_INTERNAL_FDB_LIBRARY)
-           message (WARNING "submodule third_party/capnproto is missing. to fix try run: \n git submodule update --init --recursive")
+           message (WARNING "submodule contrib/fdb is missing. to fix try run: \n git submodule update --init --recursive")
        endif ()
        set (USE_INTERNAL_FDB_LIBRARY 0)
        set (MISSING_INTERNAL_FDB_LIBRARY 1)
@@ -35,9 +35,10 @@ if (ENABLE_FDB)
         set(USE_FDB 1)
     elseif (NOT MISSING_INTERNAL_FDB_LIBRARY)
         set (USE_INTERNAL_FDB_LIBRARY 1)
-        set (FDB_INCLUDE_DIR "${UltraDB_SOURCE_DIR}/third_party/fdb/bindings/c/foundationdb" "${CMAKE_BINARY_DIR}/third_party/fdb/bindings/c/foundationdb")
+        set (FDB_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/contrib/fdb/bindings/c/foundationdb" "${CMAKE_BINARY_DIR}/contrib/fdb/bindings/c/foundationdb")
         set (FDB_LIBRARY fdb_c)
         set (USE_FDB 1)
+
     endif ()
 endif ()
 
@@ -46,4 +47,7 @@ if (USE_FDB)
 else ()
     message (STATUS "Build without fdb (support for foundation format will be disabled)")
 endif ()
+
+
+
 

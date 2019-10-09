@@ -1,5 +1,5 @@
 project(ClickHouse)
-cmake_minimum_required(VERSION 3.3)
+cmake_minimum_required(VERSION 3.12)
 
 foreach(policy
     CMP0023
@@ -83,7 +83,8 @@ endif ()
 
 include (cmake/sanitize.cmake)
 
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=unused-parameter -Wno-error=ignored-qualifiers -Wno-error=sign-compare -Wno-error=non-virtual-dtor -fpermissive -Wno-error=return-type -Wno-error=char-subscripts -Wno-error=reorder -Wno-error=catch-value= -Wno-error=shadow")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-error=unused-parameter -Wno-error=ignored-qualifiers")
 if (CMAKE_GENERATOR STREQUAL "Ninja")
     # Turn on colored output. https://github.com/ninja-build/ninja/wiki/FAQ
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")

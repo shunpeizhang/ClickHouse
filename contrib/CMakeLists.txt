@@ -334,7 +334,6 @@ if (USE_MIMALLOC)
     add_subdirectory (mimalloc)
 endif()
 
-set(USE_INTERNAL_GRPC_LIBRARY 1)
 if (USE_INTERNAL_GRPC_LIBRARY)
 	set (save_CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
     set (save_CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
@@ -344,9 +343,10 @@ if (USE_INTERNAL_GRPC_LIBRARY)
 	set(BENCHMARK_ENABLE_GTEST_TESTS 0 CACHE INTERNAL "")
 	set(ENABLE_TESTS 0 CACHE INTERNAL "")
 	
-	set(gRPC_ZLIB_PROVIDER "package")
-	set(gRPC_PROTOBUF_PROVIDER "package")
-	set(gRPC_SSL_PROVIDER "package")
+	set(gRPC_ZLIB_PROVIDER "package" CACHE STRING "package")
+	set(gRPC_PROTOBUF_PROVIDER "package" CACHE STRING "package")
+	set(gRPC_SSL_PROVIDER "package" CACHE STRING "package")
+	
 
 	add_subdirectory (grpc)
 	
@@ -356,7 +356,6 @@ if (USE_INTERNAL_GRPC_LIBRARY)
 endif ()
 
 
-set(USE_INTERNAL_FDB_LIBRARY 1)
 if (USE_INTERNAL_FDB_LIBRARY)
 	set (save_CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
         set (save_CMAKE_C_FLAGS ${CMAKE_C_FLAGS})

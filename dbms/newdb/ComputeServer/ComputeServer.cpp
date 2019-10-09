@@ -1,5 +1,6 @@
 #include "ComputeServer.h"
 
+#include <iostream>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 
@@ -66,7 +67,7 @@ int main(int argc, char *argv[])
     }
     catch (Poco::Exception& exc)
     {
-        std::cerr << exc.displayText() << std::endl;
+        std::cout << exc.displayText() << std::endl;
         return Poco::Util::Application::EXIT_SOFTWARE;
     }
 

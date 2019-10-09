@@ -2,6 +2,7 @@
 
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
+#include <iostream>
 
 #include "Common/logger_adapt.h"
 #include "core/IServerWatch.h"
