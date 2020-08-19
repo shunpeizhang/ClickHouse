@@ -1,0 +1,238 @@
+syntax="proto3";
+option java_package="com.datapps.linkoopdb.clickhouse.noderpc";
+option java_outer_classname = "NodeProtos";
+option java_multiple_files = true;
+package clickhouse;
+
+
+
+message BoolResult {
+    bool ok = 1;
+    string errinfo = 2;
+}
+
+
+message ShardArg {
+    string table_name = 1;
+    string shard_id = 2;
+}
+
+message SqlCommonInfo {
+	ShardArg shard_arg = 1;
+    repeated string shard_ids = 2;
+	repeated string table_shard_name = 3;
+	repeated string sql = 4;
+}
+
+// DDL
+message CreateShardArg {
+	SqlCommonInfo sqls = 1;
+}
+
+message DropShardArg {
+    SqlCommonInfo sqls = 1;
+    bool ignore_nonexist_shard = 2; // 是否忽略不存在的shard
+}
+
+message TruncateShardArg {
+    SqlCommonInfo sqls = 1;
+}
+
+message DropTableArg {
+    SqlCommonInfo sqls = 1;
+}
+message ChangeTableNameArg {
+	SqlCommonInfo sqls = 1;
+
+    string table_name = 2;
+    string new_table_name = 3;
+}
+message ChangeColNameArg {
+	SqlCommonInfo sqls = 1;
+	string old_col_name = 2;
+	string new_col_name = 3;
+}
+message ChangeColTypeArg {
+    SqlCommonInfo sqls = 1;	
+}
+message AddColArg {
+    SqlCommonInfo sqls = 1;
+	string col_name = 2;
+}
+message DropColArg {
+    SqlCommonInfo sqls = 1;
+	string col_name = 2;
+}
+message ChangeIdxNameArg {
+    SqlCommonInfo sqls = 1;	
+	string old_idx_name = 2;
+	string new_idx_name = 3;
+}
+message AddIdxArg {
+    SqlCommonInfo sqls = 1;
+	string idx_name = 2;
+}
+message DropIdxArg {
+    SqlCommonInfo sqls = 1;
+	string idx_name = 2;
+}
+
+
+// DML
+message ShardDeleteArg {
+    SqlCommonInfo sqls = 1;
+	string txn_id = 2;
+	int32 success_node_cnt = 3;
+}
+
+message ShardDeleteResult {
+    BoolResult result = 1;
+	repeated string shard_ids = 2;
+    repeated int64 deleted_row_cnt = 3;
+}
+
+message ShardUpdateArg {
+    SqlCommonInfo sqls = 1;
+	string txn_id = 2;
+	int32 success_node_cnt = 3;
+}
+
+message ShardUpdateResult {
+    BoolResult result = 1;
+	repeated string shard_ids = 2;
+    repeated int64 update_row_cnt = 3;
+}
+
+
+//insert
+message ShardInsertArg {
+	SqlCommonInfo sqls = 1;     // insert into table_name(...) values
+	string txn_id = 2;
+    int32 row_cnt = 3;
+    repeated ColValues col_values_list = 4;
+	int32 success_node_cnt = 5;
+}
+
+
+
+
+
+
+// DQL
+message ColValues {
+    int32 type = 1; // arrow中的type id
+    int32 type_mod = 2; // 类型修饰符，比如decimal类型有precision/scale
+    bytes null_bmp = 3;
+    repeated bytes data_list = 4;
+}
+
+message LocatedShard {
+	string storageNodeId = 1;
+	string host = 2;
+	int32 grpcPort = 3;
+	string rack = 4;   //机架（集群节点分组用）
+	string zone = 5;   //机房（集群节点分组用）
+}
+
+message Shard {
+	string table_name = 1;
+	int64 shard_id = 2;
+	repeated LocatedShard locs = 3;
+}
+
+// 从指定shard查询
+message ShardReadShardArg {
+    ShardArg shard_arg = 1;
+    string snapshot_id = 2;
+    string sql = 3;
+}
+message ShardReadResult {
+    int32 row_cnt = 1;
+    repeated ColValues col_values_list = 2; // client用ColValues中的数据构建Arrow中的Array
+}
+
+// 通过ck的分布式表查询
+message ShardReadArg {
+    ShardReadShardArg read_arg = 1;
+	repeated Shard shards = 2;
+}
+
+message GetSnapshotArg {
+    string snapshot_id = 1;
+}
+message ReleaseSnapshotArg {
+    string snapshot_id = 1;
+}
+
+
+// 事务
+message BeginArg {
+    string txn_id = 1;
+    bool set_snapshot = 2;
+    bool disable_wal = 3;
+}
+message CommitArg {
+    string txn_id = 1;
+}
+message RollbackArg {
+    string txn_id = 1;
+}
+
+
+
+
+
+
+// 信息查询接口
+// query table shard ids
+message TableShardsArg {
+	string table_name = 1;
+}
+
+message TableShardsResult {
+	BoolResult result = 1;
+	string table_name = 2;
+	repeated string shard_ids = 3;
+}
+
+
+
+
+
+service Worker {    
+    rpc CreateShard(CreateShardArg) returns (BoolResult) {}
+    rpc DropShard(DropShardArg) returns (BoolResult) {}
+    rpc TruncateShard(TruncateShardArg) returns (BoolResult) {}
+    
+    rpc DropTable(DropTableArg) returns (BoolResult) {}
+    rpc ChangeTableName(ChangeTableNameArg) returns (BoolResult) {}
+    rpc ChangeColName(ChangeColNameArg) returns (BoolResult) {}
+    rpc ChangeColType(ChangeColTypeArg) returns (BoolResult) {}
+    rpc AddCol(AddColArg) returns (BoolResult) {}
+    rpc DropCol(DropColArg) returns (BoolResult) {}
+    rpc ChangeIdxName(ChangeIdxNameArg) returns (BoolResult) {}
+    rpc AddIdx(AddIdxArg) returns (BoolResult) {}
+    rpc DropIdx(DropIdxArg) returns (BoolResult) {}
+    
+    rpc GetSnapshot(GetSnapshotArg) returns (BoolResult) {}
+    rpc ReleaseSnapshot(ReleaseSnapshotArg) returns (BoolResult) {}
+	rpc ShardReadShard(ShardReadShardArg) returns (stream ShardReadResult) {}
+    rpc ShardRead(ShardReadArg) returns (stream ShardReadResult) {}
+    
+    rpc Begin(BeginArg) returns (BoolResult) {}
+    rpc Commit(CommitArg) returns (BoolResult) {}
+    rpc Rollback(RollbackArg) returns (BoolResult) {}
+    rpc ShardInsert(ShardInsertArg) returns (BoolResult) {}
+    rpc ShardDelete(ShardDeleteArg) returns (ShardDeleteResult) {}
+    rpc ShardUpdate(ShardUpdateArg) returns (ShardUpdateResult) {}
+    
+	rpc TableShards(TableShardsArg) returns (TableShardsResult) {}
+}
+
+
+
+
+
+
+
+
