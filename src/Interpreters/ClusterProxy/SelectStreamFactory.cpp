@@ -128,6 +128,12 @@ void SelectStreamFactory::createForShard(
     if (has_virtual_shard_num_column)
         VirtualColumnUtils::rewriteEntityInAst(modified_query_ast, "_shard_num", shard_info.shard_num, "toUInt32");
 
+    if(0 < shard_info.shard_table_name.size())
+    {
+        ASTSelectQuery & select_query = modified_query_ast->as<ASTSelectQuery &>();
+        select_query.replaceDatabaseAndTable(shard_info.local_addresses[0].default_database, shard_info.shard_table_name);
+    }
+
     auto emplace_local_stream = [&]()
     {
         res.emplace_back(createLocalStream(modified_query_ast, header, context, processed_stage).getPipe());

@@ -462,6 +462,66 @@ Cluster::Cluster(const Settings & settings, const std::vector<std::vector<String
     initMisc();
 }
 
+Cluster::Cluster(const AddressesWithFailover& addresses, const Settings & settings, const String & cluster_name)
+{
+    this->addresses_with_failover = addresses;
+
+    std::string dir_name_for_internal_replication;
+    std::string dir_name_for_internal_replication_with_local;
+
+    UInt32 current_shard_num = 1;
+    for(auto& replica_addresses : addresses)
+    {
+        if(0 == replica_addresses.size())
+            throw Exception("0 == replica_addresses.size()", ErrorCodes::LOGICAL_ERROR);
+
+        Addresses shard_local_addresses;
+        ConnectionPoolPtrs all_replicas_pools;
+        all_replicas_pools.reserve(replica_addresses.size());
+
+        for (const auto & replica : replica_addresses)
+        {
+            auto replica_pool = std::make_shared<ConnectionPool>(
+                settings.distributed_connections_pool_size,
+                replica.host_name, replica.port,
+                replica.default_database, replica.user, replica.password,
+                "server", replica.compression,
+                replica.secure, replica.priority);
+
+            all_replicas_pools.emplace_back(replica_pool);
+            if (replica.is_local)
+                shard_local_addresses.push_back(replica);
+        }
+
+        ConnectionPoolWithFailoverPtr shard_pool = std::make_shared<ConnectionPoolWithFailover>(
+                    all_replicas_pools, settings.load_balancing,
+                    settings.distributed_replica_error_half_life.totalSeconds(), settings.distributed_replica_error_cap);
+
+        slot_to_shard.insert(std::end(slot_to_shard), 1, shards_info.size());
+
+        shards_info.push_back({
+            std::move(dir_name_for_internal_replication),
+            std::move(dir_name_for_internal_replication_with_local),
+            current_shard_num,
+            1,
+            std::move(shard_local_addresses),
+            std::move(shard_pool),
+            std::move(all_replicas_pools),
+            false,
+            replica_addresses[0].shard_table_name
+        });
+
+        ++current_shard_num;
+    }
+
+    if (addresses_with_failover.empty())
+        throw Exception("There must be either 'node' or 'shard' elements in config", ErrorCodes::EXCESSIVE_ELEMENT_IN_CONFIG);
+
+    initMisc();
+}
+
+
+
 
 Poco::Timespan Cluster::saturate(const Poco::Timespan & v, const Poco::Timespan & limit)
 {

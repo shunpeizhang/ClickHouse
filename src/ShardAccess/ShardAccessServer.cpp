@@ -687,16 +687,87 @@ ShardProtcolServerImpl::~ShardProtcolServerImpl()
     string snapshot_id = ShardReadArg.snapshot_id();
     string sql = ShardReadArg.sql();
     int batch_rows = ShardReadArg.batch_rows();
-    bool need_compress = ShardReadArg.need_compress();  
-
+    bool need_compress = ShardReadArg.need_compress();
+    string cluster_name = request->cluster_name();
 
     //执行
     string errorInfo;
     try
     {
-        // 初始化Cluster
-        
+        // 更新Cluster
+        std::shared_ptr<Cluster> clusterPtr;
+        {
+            Cluster::AddressesWithFailover addressesWithFailover;
+            for(auto& shard : request->shards())
+            {
+                Cluster::Addresses addresses;
+                for(auto& loc : shard.locs())
+                {
+                    Cluster::Address address;
+                    address.host_name = loc.host();
+                    address.port = loc.grpcPort();
+                    address.user = loc.user();
+                    address.password = loc.password();
+                    address.shard_index = loc.shard_index();
+                    address.replica_index = loc.replica_index();
+                    address.default_database = loc.default_database();
+                    address.shard_table_name = shard.shard_table_name();
 
+                    addresses.push_back(address);
+                }
+                addressesWithFailover.push_back(addresses);
+            }
+
+            //比较跟旧的是否存在差异
+            bool is_diff = false;
+            ClusterPtr clusterPtr = this->query_context.getClusters().getCluster(cluster_name);
+            if(clusterPtr.get())
+            {
+                auto& oldAddressesWithFailover = clusterPtr->getShardsAddresses();
+                if(oldAddressesWithFailover.size() != addressesWithFailover.size())
+                {
+                    is_diff = true;
+                }
+                else
+                {
+                    for(size_t pos = 0; oldAddressesWithFailover.size() > pos; ++pos)
+                    {
+                        if(oldAddressesWithFailover[pos].size() != addressesWithFailover[pos].size())
+                        {
+                            is_diff = true;
+                            break;
+                        }
+                        else
+                        {
+                            auto& oldReplicas = oldAddressesWithFailover[pos];
+                            auto& newReplicas = addressesWithFailover[pos];
+                            for(size_t replicaPos = 0; oldReplicas[pos].size() > replicaPos; ++replicaPos)
+                            {
+                                if(oldReplicas[replicaPos].host_name != oldReplicas[replicaPos].host_name ||
+                                    oldReplicas[replicaPos].port != oldReplicas[replicaPos].port ||
+                                    oldReplicas[replicaPos].user != oldReplicas[replicaPos].user ||
+                                    oldReplicas[replicaPos].password != oldReplicas[replicaPos].password ||
+                                    oldReplicas[replicaPos].shard_index != oldReplicas[replicaPos].shard_index ||
+                                    oldReplicas[replicaPos].replica_index != oldReplicas[replicaPos].replica_index ||
+                                    oldReplicas[replicaPos].default_database != oldReplicas[replicaPos].default_database)
+                                {
+                                    is_diff = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if(is_diff)
+                            break;
+                    }
+                }                
+            }
+
+            if(is_diff || !clusterPtr.get())
+            {
+                clusterPtr = make_shared<Cluster>(addressesWithFailover, this->query_context.getSettings(), cluster_name);
+                this->query_context.getClusters().setCluster(cluster_name, clusterPtr);
+            }
+        }
 
         //执行
         commonQueryExec(context, sql, writer, batch_rows, need_compress, read_buffer_size);

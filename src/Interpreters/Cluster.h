@@ -33,6 +33,8 @@ public:
     Cluster(const Cluster &)= delete;
     Cluster & operator=(const Cluster &) = delete;
 
+    Cluster(const AddressesWithFailover& addresses, const Settings & settings, const String & cluster_name);
+
     /// is used to set a limit on the size of the timeout
     static Poco::Timespan saturate(const Poco::Timespan & v, const Poco::Timespan & limit);
 
@@ -72,6 +74,7 @@ public:
 
         Protocol::Compression compression = Protocol::Compression::Enable;
         Protocol::Secure secure = Protocol::Secure::Disable;
+        String shard_table_name; //shard table name 
 
         Address() = default;
         Address(
@@ -141,6 +144,7 @@ public:
         /// Connection pool for each replica, contains nullptr for local replicas
         ConnectionPoolPtrs per_replica_pools;
         bool has_internal_replication = false;
+        String shard_table_name; //shard table name 
     };
 
     using ShardsInfo = std::vector<ShardInfo>;

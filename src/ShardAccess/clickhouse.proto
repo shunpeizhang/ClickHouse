@@ -133,17 +133,20 @@ message LocatedShard {
 	string storageNodeId = 1;
 	string host = 2;
 	int32 grpcPort = 3;
-	string password = 4;
-	int32 shard_index = 5;
-	int32 replica_index = 6;
-	string rack = 7;   //机架（集群节点分组用）
-	string zone =  8;   //机房（集群节点分组用）
+	string user = 4;
+	string password = 5;
+	int32 shard_index = 6;
+	int32 replica_index = 7;
+	string default_database = 8;
+	string rack = 9;   //机架（集群节点分组用）
+	string zone =  10;   //机房（集群节点分组用）	
 }
 
 message Shard {
 	string table_name = 1;
 	int64 shard_id = 2;
 	repeated LocatedShard locs = 3;
+	string shard_table_name = 4;
 }
 
 // 从指定shard查询
@@ -164,6 +167,7 @@ message ShardReadResult {
 message ReadShardsArg {
     ShardReadArg read_arg = 1;
 	repeated Shard shards = 2;
+	string cluster_name = 3;
 }
 
 
