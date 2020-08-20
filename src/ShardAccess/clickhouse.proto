@@ -82,7 +82,7 @@ message DropIdxArg {
 message ShardDeleteArg {
     SqlCommonInfo sqls = 1;
 	string txn_id = 2;
-	int32 success_node_cnt = 3;
+	int32 success_node_cnt = 3;  // 0表示等待所有副本处理完成，1表示本副本处理完成即可，>1表示具体需完成的副本数
 }
 
 message ShardDeleteResult {
@@ -94,7 +94,7 @@ message ShardDeleteResult {
 message ShardUpdateArg {
     SqlCommonInfo sqls = 1;
 	string txn_id = 2;
-	int32 success_node_cnt = 3;
+	int32 success_node_cnt = 3;  // 0表示等待所有副本处理完成，1表示本副本处理完成即可，>1表示具体需完成的副本数
 }
 
 message ShardUpdateResult {
@@ -104,13 +104,16 @@ message ShardUpdateResult {
 }
 
 
+
 //insert
 message ShardInsertArg {
-	SqlCommonInfo sqls = 1;     // insert into table_name(...) values
-	string txn_id = 2;
-    int32 row_cnt = 3;
-    repeated ColValues col_values_list = 4;
-	int32 success_node_cnt = 5;
+	ShardArg shard_arg = 1;
+	string sql = 2;     // insert into table_name(...) values
+	string txn_id = 3;
+    int32 row_cnt = 4;
+	bytes arrow_record_batch = 5;  //通过arrow::RecordBatchReader读取
+	int32 success_node_cnt = 6;    // 0表示不等待其他副本，本副本处理完成即可  >0表示具体需完成的副本数
+	bool is_compress = 7;  //arrow_record_batch数据是否已经压缩
 }
 
 
@@ -130,8 +133,11 @@ message LocatedShard {
 	string storageNodeId = 1;
 	string host = 2;
 	int32 grpcPort = 3;
-	string rack = 4;   //机架（集群节点分组用）
-	string zone = 5;   //机房（集群节点分组用）
+	string password = 4;
+	int32 shard_index = 5;
+	int32 replica_index = 6;
+	string rack = 7;   //机架（集群节点分组用）
+	string zone =  8;   //机房（集群节点分组用）
 }
 
 message Shard {
@@ -141,21 +147,25 @@ message Shard {
 }
 
 // 从指定shard查询
-message ShardReadShardArg {
+message ShardReadArg {
     ShardArg shard_arg = 1;
     string snapshot_id = 2;
     string sql = 3;
+	int32 batch_rows = 4;     //一批读取的数据量
+	bool need_compress = 5;   //返回数据是否需要压缩
 }
 message ShardReadResult {
-    int32 row_cnt = 1;
-    repeated ColValues col_values_list = 2; // client用ColValues中的数据构建Arrow中的Array
+	BoolResult result = 1;
+    int64 row_cnt = 2;
+    bytes arrow_record_batch = 3;  //通过arrow::RecordBatchReader读取
 }
 
 // 通过ck的分布式表查询
-message ShardReadArg {
-    ShardReadShardArg read_arg = 1;
+message ReadShardsArg {
+    ShardReadArg read_arg = 1;
 	repeated Shard shards = 2;
 }
+
 
 message GetSnapshotArg {
     string snapshot_id = 1;
@@ -216,7 +226,7 @@ service Worker {
     
     rpc GetSnapshot(GetSnapshotArg) returns (BoolResult) {}
     rpc ReleaseSnapshot(ReleaseSnapshotArg) returns (BoolResult) {}
-	rpc ShardReadShard(ShardReadShardArg) returns (stream ShardReadResult) {}
+	rpc ReadShards(ReadShardsArg) returns (stream ShardReadResult) {}
     rpc ShardRead(ShardReadArg) returns (stream ShardReadResult) {}
     
     rpc Begin(BeginArg) returns (BoolResult) {}

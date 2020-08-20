@@ -31,7 +31,7 @@ public:
     
     virtual ::grpc::Status GetSnapshot(::grpc::ServerContext* context, const ::clickhouse::GetSnapshotArg* request, ::clickhouse::BoolResult* response) override;
     virtual ::grpc::Status ReleaseSnapshot(::grpc::ServerContext* context, const ::clickhouse::ReleaseSnapshotArg* request, ::clickhouse::BoolResult* response) override;
-    virtual ::grpc::Status ShardReadShard(::grpc::ServerContext* context, const ::clickhouse::ShardReadShardArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) override;
+    virtual ::grpc::Status ReadShards(::grpc::ServerContext* context, const ::clickhouse::ReadShardsArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) override;
     virtual ::grpc::Status ShardRead(::grpc::ServerContext* context, const ::clickhouse::ShardReadArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) override;
     
     virtual ::grpc::Status Begin(::grpc::ServerContext* context, const ::clickhouse::BeginArg* request, ::clickhouse::BoolResult* response) override;
@@ -55,6 +55,9 @@ protected:
     bool commonDDLExec(const ::clickhouse::SqlCommonInfo &info, std::string& errorInfo, 
         std::function<bool(std::string)>& needSkipFun);
     bool commonMutateExec(const ::clickhouse::SqlCommonInfo &info, std::string& errorInfo, int success_node_cnt);
+    void commonQueryExec(::grpc::ServerContext* context, const std::string& sql, 
+        ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer,
+        int batch_rows, bool need_compress, int64_t read_buffer_size);
 
     inline void SetBoolResult(const rpc::BoolResult & arg, std::string& errorInfo);
 

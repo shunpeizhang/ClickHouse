@@ -1,7 +1,7 @@
 #include "ShardProtcolServer.h"
 
 #include <set>
-
+#include <sstream>
 
 #include "Interpreters/executeQuery.h"
 #include "logger_useful.h"
@@ -9,11 +9,13 @@
 
 using namespace ShardAccess;
 using namespace std;
+using namespace DB;
 
 
 
 #define DEFAULT_DATABASE_NAME "default"
-
+const int64_t max_read_buffer_size = 500 * 1024 * 1024;
+const int32_t max_row_size = 10 * 1024;
 
 ShardProtcolServerImpl::ShardProtcolServerImpl(IServer & server_)
     : server(server_)
@@ -563,8 +565,63 @@ ShardProtcolServerImpl::~ShardProtcolServerImpl()
 
 ::grpc::Status ShardProtcolServerImpl::ShardInsert(::grpc::ServerContext* context, const ::clickhouse::ShardInsertArg* request, ::clickhouse::BoolResult* response) 
 {
-    
+    LOG_INFO(log, "ShardInsert:" + ToString(*request));
+
+    string sql = request->sql();
+    string txn_id = request->txn_id();
+    int row_cnt = request->row_cnt();
+    int success_node_cnt = request->success_node_cnt();
+    bool is_compress = request->is_compress();
+
+    //执行
+    string errorInfo;
+    try
+    {
+        //创建临时context
+        Context tmp_context = *this->query_context;
+        tmp_context->setSetting("insert_quorum", Field(success_node_cnt));
+        
+        //执行
+        BlockIO io = executeQuery(sql, tmp_context);
+        if(!io.out)
+            throw std::runtime_error(string("sql:") + sql + " executeQuery, but not out");
+        
+        // 创建InputStream
+        Block header = io.out->getHeader();
+        std::istringstream inbuf(request->arrow_record_batch());
+        std::shared_ptr<ReadBuffer> in = std::make_shared<ReadBufferFromIStream>(inbuf, request->arrow_record_batch().size());
+        
+        std::shared_ptr<ReadBuffer> maybe_compressed_in;
+        if (is_compress)
+            maybe_compressed_in = std::make_shared<CompressedReadBuffer>(*in);
+        else
+            maybe_compressed_in = in;        
+
+        BlockInputStreamPtr block_in = FormatFactory.instance().getInput("ArrowStream", 
+            *maybe_compressed_in.get(), header, tmp_context, 
+            tmp_context->getSettings().get("max_block_size").get());
+
+        //将InputStream写入
+        copyData(block_in, io.out);
+    }
+    catch (const Poco::Exception & e)
+    {
+        errorInfo = e.message();
+    }
+    catch (const std::exception & e)
+    {
+        errorInfo = e.what();
+    }
+    catch (...)
+    {
+        errorInfo = "unknow exception";
+    }
+
+    SetBoolResult(*response, errorInfo);
+
+    return ::grpc::Status::OK;
 }
+
 ::grpc::Status ShardProtcolServerImpl::ShardDelete(::grpc::ServerContext* context, const ::clickhouse::ShardDeleteArg* request, ::clickhouse::ShardDeleteResult* response) 
 {
     LOG_INFO(log, "ShardDelete:" + ToString(*request));
@@ -621,15 +678,75 @@ ShardProtcolServerImpl::~ShardProtcolServerImpl()
     
     return ::grpc::Status::OK;
 }
-::grpc::Status ShardProtcolServerImpl::ShardReadShard(::grpc::ServerContext* context, const ::clickhouse::ShardReadShardArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) 
+::grpc::Status ShardProtcolServerImpl::ReadShards(::grpc::ServerContext* context, const ::clickhouse::ReadShardsArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) 
 {
+    LOG_INFO(log, "ReadShards:" + ToString(*request));
 
+    auto& ShardReadArg = request->read_arg();
+    auto& shard_arg = ShardReadArg.shard_arg();
+    string snapshot_id = ShardReadArg.snapshot_id();
+    string sql = ShardReadArg.sql();
+    int batch_rows = ShardReadArg.batch_rows();
+    bool need_compress = ShardReadArg.need_compress();  
+
+
+    //执行
+    string errorInfo;
+    try
+    {
+        // 初始化Cluster
+        
+
+
+        //执行
+        commonQueryExec(context, sql, writer, batch_rows, need_compress, read_buffer_size);
+    }
+    catch (const Poco::Exception & e)
+    {
+        errorInfo = e.message();
+    }
+    catch (const std::exception & e)
+    {
+        errorInfo = e.what();
+    }
+    catch (...)
+    {
+        errorInfo = "unknow exception";
+    }
+
+    return ::grpc::Status::OK;
 
 }
 ::grpc::Status ShardProtcolServerImpl::ShardRead(::grpc::ServerContext* context, const ::clickhouse::ShardReadArg* request, ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer) 
 {
+    LOG_INFO(log, "ShardRead:" + ToString(*request));
 
+    auto& shard_arg = request->shard_arg();
+    string snapshot_id = request->snapshot_id();
+    string sql = request->sql();
+    int batch_rows = request->batch_rows();
+    bool need_compress = request->need_compress();    
 
+    //执行
+    string errorInfo;
+    try
+    {
+        commonQueryExec(context, sql, writer, batch_rows, need_compress, read_buffer_size);
+    }
+    catch (const Poco::Exception & e)
+    {
+        errorInfo = e.message();
+    }
+    catch (const std::exception & e)
+    {
+        errorInfo = e.what();
+    }
+    catch (...)
+    {
+        errorInfo = "unknow exception";
+    }
+
+    return ::grpc::Status::OK;
 }
 
 bool ShardProtcolServerImpl::checkSqlCommonInfo(const ::clickhouse::SqlCommonInfo &info, std::set<std::string>& shardIDs)
@@ -782,4 +899,86 @@ void ShardProtcolServerImpl::SetBoolResult(const rpc::BoolResult & arg, std::str
     }        
     else
         arg.set_ok(true);
+}
+
+void ShardProtcolServerImpl::commonQueryExec(::grpc::ServerContext* context, const std::string& sql, 
+    ::grpc::ServerWriter< ::clickhouse::ShardReadResult>* writer,
+    int batch_rows, bool need_compress, int64_t read_buffer_size)
+{
+    // 是否每批读取行数对应size超过max_read_buffer_size
+    int64_t read_buffer_size = batch_rows * max_row_size * 2;
+    if(read_buffer_size > max_read_buffer_size)
+    {
+        string errmsg = "batch_rows * max_row_size * 2 > max_read_buffer_size";
+        throw runtime_error(errmsg);
+    }
+
+    //创建临时context
+    Context tmp_context = *this->query_context;
+    tmp_context->setSetting("max_block_size", Field(batch_rows));
+
+    //执行
+    BlockIO io = executeQuery(sql, tmp_context);
+    if(!io.in)
+        throw std::runtime_error(string("sql:") + sql + " executeQuery, but not in");
+
+    Block block;
+    std::ostringstream outbuf;
+    std::shared_ptr<WriteBuffer> out = std::make_shared<DB::WriteBufferFromOStream>(outbuf, read_buffer_size);
+    while(block = io.in->read())
+    {
+        // 转换block到ostringstream
+        {
+            //清理之前的写入
+            outbuf.clear();
+            out->internalBuffer().resize(0);
+            out->buffer().resize(0);
+            out->pos = out->buffer().begin();
+
+            std::shared_ptr<WriteBuffer> maybe_compressed_out;
+            if (need_compress)
+                maybe_compressed_out = std::make_shared<CompressedWriteBuffer>(
+                    *out, CompressionCodecFactory::instance().get("ZSTD", 1, false));
+            else
+                maybe_compressed_out = out;
+
+            //转换Blcok
+            std::shared_ptr<arrow::Table> arrow_table;
+            Chunk chunk(block.mutateColumns(), block.rows());
+            DB::CHColumnToArrowColumn::chChunkToArrowTable(arrow_table, header, chunk, header.columns(), "ArrowStream");
+    
+            // 结果序列化到outbuf
+            arrow::Status status;
+            std::shared_ptr<arrow::ipc::RecordBatchWriter> writer;
+            std::shared_ptr<ArrowBufferedOutputStream> arrow_ostream = std::make_shared<ArrowBufferedOutputStream>(maybe_compressed_out);
+            arrow::ipc::RecordBatchStreamWriter::Open(arrow_ostream.get(), arrow_table->schema(), &writer);
+            auto status = writer->WriteTable(*arrow_table, batch_rows);
+            if (!status.ok())
+                throw Exception{"Error while writing a table: " + status.ToString(), ErrorCodes::UNKNOWN_EXCEPTION};
+            
+            auto status = writer->Close();
+            if (!status.ok())
+                throw Exception{"Error while closing a table: " + status.ToString(), ErrorCodes::UNKNOWN_EXCEPTION};
+
+            maybe_compressed_out->next();
+        }
+
+        //构造结果并发送
+        ::clickhouse::ShardReadResult result;
+        result.mutable_result()->set_ok(true);
+        result.set_row_cnt(arrow_table->num_rows());
+        result.set_arrow_record_batch(outbuf.str());
+
+        if(context->IsCancelled())
+        {
+            string errmsg = "context->IsCancelled() rpc write fail:" + context->peer() + " aborted the stream! snapshot_id:" + snapshot_id;
+            throw runtime_error(errmsg);
+        }
+
+        if(!writer->write(result))
+        {
+            string errmsg = "rpc write fail:" + context->peer() + " aborted the stream";
+            throw runtime_error(errmsg);
+        }
+    }
 }
